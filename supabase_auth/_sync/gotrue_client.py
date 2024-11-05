@@ -4,7 +4,7 @@ from contextlib import suppress
 from functools import partial
 from json import loads
 from time import time
-from typing import Callable, Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 from uuid import uuid4
 
@@ -61,6 +61,7 @@ from ..types import (
     OAuthResponse,
     Options,
     Provider,
+    ResendCredentials,
     Session,
     SignInAnonymouslyCredentials,
     SignInWithIdTokenCredentials,
@@ -86,15 +87,16 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
     def __init__(
         self,
         *,
-        url: Union[str, None] = None,
-        headers: Union[Dict[str, str], None] = None,
-        storage_key: Union[str, None] = None,
+        url: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        storage_key: Optional[str] = None,
         auto_refresh_token: bool = True,
         persist_session: bool = True,
-        storage: Union[SyncSupportedStorage, None] = None,
-        http_client: Union[SyncClient, None] = None,
+        storage: Optional[SyncSupportedStorage] = None,
+        http_client: Optional[SyncClient] = None,
         flow_type: AuthFlowType = "implicit",
         verify: bool = True,
+        proxy: Optional[str] = None,
     ) -> None:
         SyncGoTrueBaseAPI.__init__(
             self,
@@ -102,13 +104,14 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
             headers=headers or DEFAULT_HEADERS,
             http_client=http_client,
             verify=verify,
+            proxy=proxy,
         )
         self._storage_key = storage_key or STORAGE_KEY
         self._auto_refresh_token = auto_refresh_token
         self._persist_session = persist_session
         self._storage = storage or SyncMemoryStorage()
-        self._in_memory_session: Union[Session, None] = None
-        self._refresh_token_timer: Union[Timer, None] = None
+        self._in_memory_session: Optional[Session] = None
+        self._refresh_token_timer: Optional[Timer] = None
         self._network_retries = 0
         self._state_change_emitters: Dict[str, Subscription] = {}
         self._flow_type = flow_type
@@ -131,7 +134,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
 
     # Initializations
 
-    def initialize(self, *, url: Union[str, None] = None) -> None:
+    def initialize(self, *, url: Optional[str] = None) -> None:
         if url and self._is_implicit_grant_flow(url):
             self.initialize_from_url(url)
         else:
@@ -155,7 +158,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
     # Public methods
 
     def sign_in_anonymously(
-        self, credentials: Union[SignInAnonymouslyCredentials, None] = None
+        self, credentials: Optional[SignInAnonymouslyCredentials] = None
     ) -> AuthResponse:
         """
         Creates a new anonymous user.
@@ -513,6 +516,41 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
             "You must provide either an email or phone number"
         )
 
+    def resend(
+        self,
+        credentials: ResendCredentials,
+    ) -> AuthOtpResponse:
+        """
+        Resends an existing signup confirmation email, email change email, SMS OTP or phone change OTP.
+        """
+        email = credentials.get("email")
+        phone = credentials.get("phone")
+        type = credentials.get("type")
+        options = credentials.get("options", {})
+        email_redirect_to = options.get("email_redirect_to")
+        captcha_token = options.get("captcha_token")
+        body = {
+            "type": type,
+            "gotrue_meta_security": {
+                "captcha_token": captcha_token,
+            },
+        }
+
+        if email is None and phone is None:
+            raise AuthInvalidCredentialsError(
+                "You must provide either an email or phone number"
+            )
+
+        body.update({"email": email} if email else {"phone": phone})
+
+        return self._request(
+            "POST",
+            "resend",
+            body=body,
+            redirect_to=email_redirect_to if email else None,
+            xform=parse_auth_otp_response,
+        )
+
     def verify_otp(self, params: VerifyOtpParams) -> AuthResponse:
         """
         Log in a user given a User supplied OTP received via mobile.
@@ -535,14 +573,26 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
             self._notify_all_subscribers("SIGNED_IN", response.session)
         return response
 
-    def get_session(self) -> Union[Session, None]:
+    def reauthenticate(self) -> AuthResponse:
+        session = self.get_session()
+        if not session:
+            raise AuthSessionMissingError()
+
+        return self._request(
+            "GET",
+            "reauthenticate",
+            jwt=session.access_token,
+            xform=parse_auth_response,
+        )
+
+    def get_session(self) -> Optional[Session]:
         """
         Returns the session, refreshing it if necessary.
 
         The session returned can be null if the session is not detected which
         can happen in the event a user is not signed-in or has logged out.
         """
-        current_session: Union[Session, None] = None
+        current_session: Optional[Session] = None
         if self._persist_session:
             maybe_session = self._storage.get_item(self._storage_key)
             current_session = self._get_valid_session(maybe_session)
@@ -564,7 +614,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
             else current_session
         )
 
-    def get_user(self, jwt: Union[str, None] = None) -> Union[UserResponse, None]:
+    def get_user(self, jwt: Optional[str] = None) -> Optional[UserResponse]:
         """
         Gets the current user details if there is an existing session.
 
@@ -616,7 +666,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         time_now = round(time())
         expires_at = time_now
         has_expired = True
-        session: Union[Session, None] = None
+        session: Optional[Session] = None
         if access_token and access_token.split(".")[1]:
             payload = self._decode_jwt(access_token)
             exp = payload.get("exp")
@@ -644,7 +694,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         self._notify_all_subscribers("TOKEN_REFRESHED", session)
         return AuthResponse(session=session, user=response.user)
 
-    def refresh_session(self, refresh_token: Union[str, None] = None) -> AuthResponse:
+    def refresh_session(self, refresh_token: Optional[str] = None) -> AuthResponse:
         """
         Returns a new session, regardless of expiry status.
 
@@ -685,7 +735,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
 
     def on_auth_state_change(
         self,
-        callback: Callable[[AuthChangeEvent, Union[Session, None]], None],
+        callback: Callable[[AuthChangeEvent, Optional[Session]], None],
     ) -> Subscription:
         """
         Receive a notification every time an auth event happens.
@@ -703,11 +753,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         self._state_change_emitters[unique_id] = subscription
         return subscription
 
-    def reset_password_email(
-        self,
-        email: str,
-        options: Options = {},
-    ) -> None:
+    def reset_password_for_email(self, email: str, options: Options = {}) -> None:
         """
         Sends a password reset request to an email address.
         """
@@ -723,20 +769,41 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
             redirect_to=options.get("redirect_to"),
         )
 
+    def reset_password_email(
+        self,
+        email: str,
+        options: Options = {},
+    ) -> None:
+        """
+        Sends a password reset request to an email address.
+        """
+        self.reset_password_for_email(email, options)
+
     # MFA methods
 
     def _enroll(self, params: MFAEnrollParams) -> AuthMFAEnrollResponse:
         session = self.get_session()
         if not session:
             raise AuthSessionMissingError()
+
+        body = {
+            "friendly_name": params["friendly_name"],
+            "factor_type": params["factor_type"],
+        }
+
+        if params["factor_type"] == "phone":
+            body["phone"] = params["phone"]
+        else:
+            body["issuer"] = params["issuer"]
+
         response = self._request(
             "POST",
             "factors",
-            body=params,
+            body=body,
             jwt=session.access_token,
             xform=partial(model_validate, AuthMFAEnrollResponse),
         )
-        if response.totp.qr_code:
+        if params["factor_type"] == "totp" and response.totp.qr_code:
             response.totp.qr_code = f"data:image/svg+xml;utf-8,{response.totp.qr_code}"
         return response
 
@@ -747,6 +814,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         return self._request(
             "POST",
             f"factors/{params.get('factor_id')}/challenge",
+            body={"channel": params.get("channel")},
             jwt=session.access_token,
             xform=partial(model_validate, AuthMFAChallengeResponse),
         )
@@ -799,7 +867,8 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         response = self.get_user()
         all = response.user.factors or []
         totp = [f for f in all if f.factor_type == "totp" and f.status == "verified"]
-        return AuthMFAListFactorsResponse(all=all, totp=totp)
+        phone = [f for f in all if f.factor_type == "phone" and f.status == "verified"]
+        return AuthMFAListFactorsResponse(all=all, totp=totp, phone=phone)
 
     def _get_authenticator_assurance_level(
         self,
@@ -812,7 +881,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
                 current_authentication_methods=[],
             )
         payload = self._decode_jwt(session.access_token)
-        current_level: Union[AuthenticatorAssuranceLevels, None] = None
+        current_level: Optional[AuthenticatorAssuranceLevels] = None
         if payload.get("aal"):
             current_level = payload.get("aal")
         verified_factors = [
@@ -840,7 +909,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
     def _get_session_from_url(
         self,
         url: str,
-    ) -> Tuple[Session, Union[str, None]]:
+    ) -> Tuple[Session, Optional[str]]:
         if not self._is_implicit_grant_flow(url):
             raise AuthImplicitGrantRedirectError("Not a valid implicit grant flow url.")
         result = urlparse(url)
@@ -985,15 +1054,15 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
     def _notify_all_subscribers(
         self,
         event: AuthChangeEvent,
-        session: Union[Session, None],
+        session: Optional[Session],
     ) -> None:
         for subscription in self._state_change_emitters.values():
             subscription.callback(event, session)
 
     def _get_valid_session(
         self,
-        raw_session: Union[str, None],
-    ) -> Union[Session, None]:
+        raw_session: Optional[str],
+    ) -> Optional[Session]:
         if not raw_session:
             return None
         data = loads(raw_session)
@@ -1019,7 +1088,7 @@ class SyncGoTrueClient(SyncGoTrueBaseAPI):
         self,
         query_params: Dict[str, List[str]],
         name: str,
-    ) -> Union[str, None]:
+    ) -> Optional[str]:
         return query_params[name][0] if name in query_params else None
 
     def _is_implicit_grant_flow(self, url: str) -> bool:

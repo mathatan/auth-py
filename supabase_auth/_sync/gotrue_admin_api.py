@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Dict, List, Union
+from typing import Dict, List, Optional
 
 from ..helpers import model_validate, parse_link_response, parse_user_response
 from ..http_clients import SyncClient
@@ -13,7 +13,7 @@ from ..types import (
     AuthMFAAdminListFactorsResponse,
     GenerateLinkParams,
     GenerateLinkResponse,
-    Options,
+    InviteUserByEmailOptions,
     SignOutScope,
     User,
     UserResponse,
@@ -28,8 +28,9 @@ class SyncGoTrueAdminAPI(SyncGoTrueBaseAPI):
         *,
         url: str = "",
         headers: Dict[str, str] = {},
-        http_client: Union[SyncClient, None] = None,
+        http_client: Optional[SyncClient] = None,
         verify: bool = True,
+        proxy: Optional[str] = None,
     ) -> None:
         SyncGoTrueBaseAPI.__init__(
             self,
@@ -37,6 +38,7 @@ class SyncGoTrueAdminAPI(SyncGoTrueBaseAPI):
             headers=headers,
             http_client=http_client,
             verify=verify,
+            proxy=proxy,
         )
         self.mfa = SyncGoTrueAdminMFAAPI()
         self.mfa.list_factors = self._list_factors
@@ -57,7 +59,7 @@ class SyncGoTrueAdminAPI(SyncGoTrueBaseAPI):
     def invite_user_by_email(
         self,
         email: str,
-        options: Options = {},
+        options: InviteUserByEmailOptions = {},
     ) -> UserResponse:
         """
         Sends an invite link to an email address.

@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from ..constants import COOKIE_OPTIONS, DEFAULT_HEADERS, GOTRUE_URL, STORAGE_KEY
 from ..exceptions import APIError
-from ..helpers import model_dump, model_validate
+from ..helpers import is_http_url, model_dump, model_validate
 from ..types import (
     AuthChangeEvent,
     CookieOptions,
@@ -38,6 +38,7 @@ class SyncGoTrueClient:
         api: Optional[SyncGoTrueAPI] = None,
         replace_default_headers: bool = False,
         verify: bool = True,
+        proxy: Optional[str] = None,
     ) -> None:
         """Create a new client
 
@@ -57,7 +58,11 @@ class SyncGoTrueClient:
             The options for the cookie.
         verify: bool
             Verify SSL, True by default, False disables verification.
+        proxy: str
+            HTTP Proxy string or None, None by default, None disables proxy.
         """
+        if not is_http_url(url):
+            ValueError("url must be a valid HTTP URL string")
         if url.startswith("http://"):
             print(
                 "Warning:\n\nDO NOT USE HTTP IN PRODUCTION FOR GOTRUE EVER!\n"
@@ -76,6 +81,7 @@ class SyncGoTrueClient:
             "headers": {**empty_or_default_headers, **headers},
             "cookie_options": cookie_options,
             "verify": verify,
+            "proxy": proxy,
         }
         self.api = api or SyncGoTrueAPI(**args)
 
@@ -424,6 +430,8 @@ class SyncGoTrueClient:
         APIError
             If an error occurs.
         """
+        if not is_http_url(url):
+            ValueError("url must be a valid HTTP URL string")
         data = urlparse(url)
         query = parse_qs(data.query)
         error_description = query.get("error_description")

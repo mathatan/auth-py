@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, TypeVar, Union, overload
+from typing import Any, Callable, Dict, Optional, TypeVar, overload
 
 from httpx import Response
 from pydantic import BaseModel
 from typing_extensions import Literal, Self
 
+from ..constants import API_VERSION_HEADER_NAME, API_VERSIONS
 from ..helpers import handle_exception, model_dump
 from ..http_clients import SyncClient
 
@@ -18,13 +19,15 @@ class SyncGoTrueBaseAPI:
         *,
         url: str,
         headers: Dict[str, str],
-        http_client: Union[SyncClient, None],
+        http_client: Optional[SyncClient],
         verify: bool = True,
+        proxy: Optional[str] = None,
     ):
         self._url = url
         self._headers = headers
         self._http_client = http_client or SyncClient(
             verify=bool(verify),
+            proxy=proxy,
             follow_redirects=True,
             http2=True,
         )
@@ -44,11 +47,11 @@ class SyncGoTrueBaseAPI:
         method: Literal["GET", "OPTIONS", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         path: str,
         *,
-        jwt: Union[str, None] = None,
-        redirect_to: Union[str, None] = None,
-        headers: Union[Dict[str, str], None] = None,
-        query: Union[Dict[str, str], None] = None,
-        body: Union[Any, None] = None,
+        jwt: Optional[str] = None,
+        redirect_to: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        query: Optional[Dict[str, str]] = None,
+        body: Optional[Any] = None,
         no_resolve_json: Literal[False] = False,
         xform: Callable[[Any], T],
     ) -> T: ...  # pragma: no cover
@@ -59,11 +62,11 @@ class SyncGoTrueBaseAPI:
         method: Literal["GET", "OPTIONS", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         path: str,
         *,
-        jwt: Union[str, None] = None,
-        redirect_to: Union[str, None] = None,
-        headers: Union[Dict[str, str], None] = None,
-        query: Union[Dict[str, str], None] = None,
-        body: Union[Any, None] = None,
+        jwt: Optional[str] = None,
+        redirect_to: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        query: Optional[Dict[str, str]] = None,
+        body: Optional[Any] = None,
         no_resolve_json: Literal[True],
         xform: Callable[[Response], T],
     ) -> T: ...  # pragma: no cover
@@ -74,11 +77,11 @@ class SyncGoTrueBaseAPI:
         method: Literal["GET", "OPTIONS", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         path: str,
         *,
-        jwt: Union[str, None] = None,
-        redirect_to: Union[str, None] = None,
-        headers: Union[Dict[str, str], None] = None,
-        query: Union[Dict[str, str], None] = None,
-        body: Union[Any, None] = None,
+        jwt: Optional[str] = None,
+        redirect_to: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        query: Optional[Dict[str, str]] = None,
+        body: Optional[Any] = None,
         no_resolve_json: bool = False,
     ) -> None: ...  # pragma: no cover
 
@@ -87,16 +90,18 @@ class SyncGoTrueBaseAPI:
         method: Literal["GET", "OPTIONS", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
         path: str,
         *,
-        jwt: Union[str, None] = None,
-        redirect_to: Union[str, None] = None,
-        headers: Union[Dict[str, str], None] = None,
-        query: Union[Dict[str, str], None] = None,
-        body: Union[Any, None] = None,
+        jwt: Optional[str] = None,
+        redirect_to: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        query: Optional[Dict[str, str]] = None,
+        body: Optional[Any] = None,
         no_resolve_json: bool = False,
-        xform: Union[Callable[[Any], T], None] = None,
-    ) -> Union[T, None]:
+        xform: Optional[Callable[[Any], T]] = None,
+    ) -> Optional[T]:
         url = f"{self._url}/{path}"
         headers = {**self._headers, **(headers or {})}
+        if API_VERSION_HEADER_NAME not in headers:
+            headers[API_VERSION_HEADER_NAME] = API_VERSIONS["2024-01-01"].get("name")
         if "Content-Type" not in headers:
             headers["Content-Type"] = "application/json;charset=UTF-8"
         if jwt:

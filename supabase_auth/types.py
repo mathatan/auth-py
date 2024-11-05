@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from time import time
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 try:
     # > 2
@@ -26,14 +26,17 @@ Provider = Literal[
     "discord",
     "facebook",
     "figma",
+    "fly",
     "github",
     "gitlab",
     "google",
     "kakao",
     "keycloak",
     "linkedin",
+    "linkedin_oidc",
     "notion",
     "slack",
+    "slack_oidc",
     "spotify",
     "twitch",
     "twitter",
@@ -81,18 +84,23 @@ class AMREntry(BaseModel):
 
 class Options(TypedDict):
     redirect_to: NotRequired[str]
+    captcha_token: NotRequired[str]
+
+
+class InviteUserByEmailOptions(TypedDict):
+    redirect_to: NotRequired[str]
     data: NotRequired[Any]
 
 
 class AuthResponse(BaseModel):
-    user: Union[User, None] = None
-    session: Union[Session, None] = None
+    user: Optional[User] = None
+    session: Optional[Session] = None
 
 
 class AuthOtpResponse(BaseModel):
     user: None = None
     session: None = None
-    message_id: Union[str, None] = None
+    message_id: Optional[str] = None
 
 
 class OAuthResponse(BaseModel):
@@ -117,12 +125,12 @@ class UserResponse(BaseModel):
 
 
 class Session(BaseModel):
-    provider_token: Union[str, None] = None
+    provider_token: Optional[str] = None
     """
     The oauth provider token. If present, this can be used to make external API
     requests to the oauth provider used.
     """
-    provider_refresh_token: Union[str, None] = None
+    provider_refresh_token: Optional[str] = None
     """
     The oauth provider refresh token. If present, this can be used to refresh
     the provider_token via the oauth provider's API.
@@ -138,7 +146,7 @@ class Session(BaseModel):
     The number of seconds until the token expires (since it was issued).
     Returned when a login is confirmed.
     """
-    expires_at: Union[int, None] = None
+    expires_at: Optional[int] = None
     """
     A timestamp of when the token will expire. Returned when a login is confirmed.
     """
@@ -160,8 +168,8 @@ class UserIdentity(BaseModel):
     identity_data: Dict[str, Any]
     provider: str
     created_at: datetime
-    last_sign_in_at: Union[datetime, None] = None
-    updated_at: Union[datetime, None] = None
+    last_sign_in_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
 class Factor(BaseModel):
@@ -173,11 +181,11 @@ class Factor(BaseModel):
     """
     ID of the factor.
     """
-    friendly_name: Union[str, None] = None
+    friendly_name: Optional[str] = None
     """
     Friendly name of the factor, useful to disambiguate between multiple factors.
     """
-    factor_type: Union[Literal["totp"], str]
+    factor_type: Union[Literal["totp", "phone"], str]
     """
     Type of factor. Only `totp` supported with this version but may change in
     future versions.
@@ -195,23 +203,25 @@ class User(BaseModel):
     app_metadata: Dict[str, Any]
     user_metadata: Dict[str, Any]
     aud: str
-    confirmation_sent_at: Union[datetime, None] = None
-    recovery_sent_at: Union[datetime, None] = None
-    email_change_sent_at: Union[datetime, None] = None
-    new_email: Union[str, None] = None
-    invited_at: Union[datetime, None] = None
-    action_link: Union[str, None] = None
-    email: Union[str, None] = None
-    phone: Union[str, None] = None
+    confirmation_sent_at: Optional[datetime] = None
+    recovery_sent_at: Optional[datetime] = None
+    email_change_sent_at: Optional[datetime] = None
+    new_email: Optional[str] = None
+    new_phone: Optional[str] = None
+    invited_at: Optional[datetime] = None
+    action_link: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
     created_at: datetime
-    confirmed_at: Union[datetime, None] = None
-    email_confirmed_at: Union[datetime, None] = None
-    phone_confirmed_at: Union[datetime, None] = None
-    last_sign_in_at: Union[datetime, None] = None
-    role: Union[str, None] = None
-    updated_at: Union[datetime, None] = None
-    identities: Union[List[UserIdentity], None] = None
-    factors: Union[List[Factor], None] = None
+    confirmed_at: Optional[datetime] = None
+    email_confirmed_at: Optional[datetime] = None
+    phone_confirmed_at: Optional[datetime] = None
+    last_sign_in_at: Optional[datetime] = None
+    role: Optional[str] = None
+    updated_at: Optional[datetime] = None
+    identities: Optional[List[UserIdentity]] = None
+    is_anonymous: bool = False
+    factors: Optional[List[Factor]] = None
 
 
 class UserAttributes(TypedDict):
@@ -227,6 +237,28 @@ class AdminUserAttributes(UserAttributes, TypedDict):
     email_confirm: NotRequired[bool]
     phone_confirm: NotRequired[bool]
     ban_duration: NotRequired[Union[str, Literal["none"]]]
+    role: NotRequired[str]
+    """
+    The `role` claim set in the user's access token JWT.
+
+    When a user signs up, this role is set to `authenticated` by default. You should only modify the `role` if you need to provision several levels of admin access that have different permissions on individual columns in your database.
+
+    Setting this role to `service_role` is not recommended as it grants the user admin privileges.
+    """
+    password_hash: NotRequired[str]
+    """
+    The `password_hash` for the user's password.
+
+    Allows you to specify a password hash for the user. This is useful for migrating a user's password hash from another service.
+
+    Supports bcrypt and argon2 password hashes.
+    """
+    id: NotRequired[str]
+    """
+    The `id` for the user.
+
+    Allows you to overwrite the default `id` set for the user.
+    """
 
 
 class Subscription(BaseModel):
@@ -234,7 +266,7 @@ class Subscription(BaseModel):
     """
     The subscriber UUID. This will be set by the client.
     """
-    callback: Callable[[AuthChangeEvent, Union[Session, None]], None]
+    callback: Callable[[AuthChangeEvent, Optional[Session]], None]
     """
     The function to call every time there is an event.
     """
@@ -347,6 +379,30 @@ SignInWithPasswordlessCredentials = Union[
     SignInWithEmailAndPasswordlessCredentials,
     SignInWithPhoneAndPasswordlessCredentials,
 ]
+
+
+class ResendEmailCredentialsOptions(TypedDict):
+    email_redirect_to: NotRequired[str]
+    captcha_token: NotRequired[str]
+
+
+class ResendEmailCredentials(TypedDict):
+    type: Literal["signup", "email_change"]
+    email: str
+    options: NotRequired[ResendEmailCredentialsOptions]
+
+
+class ResendPhoneCredentialsOptions(TypedDict):
+    captcha_token: NotRequired[str]
+
+
+class ResendPhoneCredentials(TypedDict):
+    type: Literal["sms", "phone_change"]
+    phone: str
+    options: NotRequired[ResendPhoneCredentialsOptions]
+
+
+ResendCredentials = Union[ResendEmailCredentials, ResendPhoneCredentials]
 
 
 class SignInWithOAuthCredentialsOptions(TypedDict):
@@ -465,9 +521,10 @@ GenerateLinkType = Literal[
 
 
 class MFAEnrollParams(TypedDict):
-    factor_type: Literal["totp"]
+    factor_type: Literal["totp", "phone"]
     issuer: NotRequired[str]
     friendly_name: NotRequired[str]
+    phone: str
 
 
 class MFAUnenrollParams(TypedDict):
@@ -512,6 +569,7 @@ class MFAChallengeParams(TypedDict):
     """
     ID of the factor to be challenged.
     """
+    channel: NotRequired[Literal["sms", "whatsapp"]]
 
 
 class MFAChallengeAndVerifyParams(TypedDict):
@@ -573,13 +631,22 @@ class AuthMFAEnrollResponse(BaseModel):
     """
     ID of the factor that was just enrolled (in an unverified state).
     """
-    type: Literal["totp"]
+    type: Literal["totp", "phone"]
     """
     Type of MFA factor. Only `totp` supported for now.
     """
     totp: AuthMFAEnrollResponseTotp
     """
     TOTP enrollment information.
+    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    friendly_name: str
+    """
+    Friendly name of the factor, useful for distinguishing between factors
+    """
+    phone: str
+    """
+    Phone number of the MFA factor in E.164 format. Used to send messages
     """
 
 
@@ -599,6 +666,10 @@ class AuthMFAChallengeResponse(BaseModel):
     """
     Timestamp in UNIX seconds when this challenge will no longer be usable.
     """
+    factor_type: Literal["totp", "phone"]
+    """
+    Factor Type which generated the challenge
+    """
 
 
 class AuthMFAListFactorsResponse(BaseModel):
@@ -610,17 +681,21 @@ class AuthMFAListFactorsResponse(BaseModel):
     """
     Only verified TOTP factors. (A subset of `all`.)
     """
+    phone: List[Factor]
+    """
+    Only verified Phone factors. (A subset of `all`.)
+    """
 
 
 AuthenticatorAssuranceLevels = Literal["aal1", "aal2"]
 
 
 class AuthMFAGetAuthenticatorAssuranceLevelResponse(BaseModel):
-    current_level: Union[AuthenticatorAssuranceLevels, None] = None
+    current_level: Optional[AuthenticatorAssuranceLevels] = None
     """
     Current AAL level of the session.
     """
-    next_level: Union[AuthenticatorAssuranceLevels, None] = None
+    next_level: Optional[AuthenticatorAssuranceLevels] = None
     """
     Next possible AAL level for the session. If the next level is higher
     than the current one, the user should go through MFA.
@@ -703,8 +778,8 @@ class GenerateLinkResponse(BaseModel):
 
 class DecodedJWTDict(TypedDict):
     exp: NotRequired[int]
-    aal: NotRequired[Union[AuthenticatorAssuranceLevels, None]]
-    amr: NotRequired[Union[List[AMREntry], None]]
+    aal: NotRequired[Optional[AuthenticatorAssuranceLevels]]
+    amr: NotRequired[Optional[List[AMREntry]]]
 
 
 SignOutScope = Literal["global", "local", "others"]
